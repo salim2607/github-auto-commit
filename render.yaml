@@ -1,0 +1,28 @@
+services:
+  - type: cron
+    name: github-contribution-matin
+    runtime: python
+    schedule: "0 9 * * *"   # 9h00 UTC chaque jour
+    buildCommand: pip install -r requirements.txt
+    startCommand: python auto_commit.py
+    envVars:
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_USERNAME
+        sync: false
+      - key: GITHUB_REPO
+        sync: false
+
+  - type: cron
+    name: github-contribution-soir
+    runtime: python
+    schedule: "0 20 * * *"  # 20h00 UTC chaque jour
+    buildCommand: pip install -r requirements.txt
+    startCommand: python auto_commit.py
+    envVars:
+      - key: GITHUB_TOKEN
+        sync: false
+      - key: GITHUB_USERNAME
+        sync: false
+      - key: GITHUB_REPO
+        sync: false
