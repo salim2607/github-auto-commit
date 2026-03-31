@@ -66,7 +66,9 @@ def open_pr(branch, title, body):
     r = requests.post(f"{API}/pulls", headers=HEADERS, json={
         "title": title, "head": branch, "base": "main", "body": body,
     })
-    r.raise_for_status()
+    if not r.ok:
+        print(f"[ERREUR PR] {r.status_code} - {r.text}")
+        r.raise_for_status()
     return r.json()["number"]
 
 
