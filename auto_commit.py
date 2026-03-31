@@ -2,6 +2,7 @@ import os
 import base64
 import requests
 from datetime import datetime, timezone
+import time
 
 GITHUB_TOKEN = os.environ["GITHUB_TOKEN"]
 GITHUB_USERNAME = os.environ["GITHUB_USERNAME"]
@@ -11,19 +12,82 @@ HEADERS = {
     "Authorization": f"token {GITHUB_TOKEN}",
     "Accept": "application/vnd.github.v3+json",
 }
-API_BASE = f"https://api.github.com/repos/{GITHUB_USERNAME}/{GITHUB_REPO}"
+API = f"https://api.github.com/repos/{GITHUB_USERNAME}/{GITHUB_REPO}"
 FILE_PATH = "contributions/log.md"
 
+# Co-auteurs fictifs pour l'achievement Pair Extraordinaire
+CO_AUTHORS = [
+    "Co-authored-by: contributor-bot <contributor-bot@users.noreply.github.com>",
+    "Co-authored-by: dev-assistant <dev-assistant@users.noreply.github.com>",
+]
 
-def get_current_file():
-    url = f"{API_BASE}/contents/{FILE_PATH}"
-    response = requests.get(url, headers=HEADERS)
-    if response.status_code == 200:
-        data = response.json()
-        content = base64.b64decode(data["content"]).decode("utf-8")
-        sha = data["sha"]
-        return content, sha
+
+def get_main_sha():
+    r = requests.get(f"{API}/git/ref/heads/main", headers=HEADERS)
+    return r.json()["object"]["sha"]
+
+
+def get_file(branch="main"):
+    r = requests.get(f"{API}/contents/{FILE_PATH}?ref={branch}", headers=HEADERS)
+    if r.status_code == 200:
+        d = r.json()
+        return base64.b64decode(d["content"]).decode(), d["sha"]
     return None, None
+
+
+def create_branch(branch_name, sha):
+    requests.post(f"{API}/git/refs", headers=HEADERS, json={
+        "ref": f"refs/heads/{branch_name}",
+        "sha": sha,
+    })
+
+
+def delete_branch(branch_name):
+    requests.delete(f"{API}/git/refs/heads/{branch_name}", headers=HEADERS)
+
+
+def update_file(branch, content, sha, message):
+    payload = {
+        "message": message,
+        "content": base64.b64encode(content.encode()).decode(),
+        "branch": branch,
+    }
+    if sha:
+        payload["sha"] = sha
+    r = requests.put(f"{API}/contents/{FILE_PATH}", headers=HEADERS, json=payload)
+    r.raise_for_status()
+
+
+def open_pr(branch, title, body):
+    r = requests.post(f"{API}/pulls", headers=HEADERS, json={
+        "title": title,
+        "head": branch,
+        "base": "main",
+        "body": body,
+    })
+    r.raise_for_status()
+    return r.json()["number"]
+
+
+def merge_pr(pr_number):
+    r = requests.put(f"{API}/pulls/{pr_number}/merge", headers=HEADERS, json={
+        "merge_method": "squash",
+        "commit_title": f"Merge pull request #{pr_number}",
+    })
+    r.raise_for_status()
+
+
+def quickdraw():
+    """Ouvre et ferme une issue immédiatement → achievement Quickdraw"""
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    r = requests.post(f"{API}/issues", headers=HEADERS, json={
+        "title": f"Contribution log - {now}",
+        "body": "Mise à jour automatique du journal de contributions.",
+    })
+    if r.status_code == 201:
+        issue_number = r.json()["number"]
+        requests.patch(f"{API}/issues/{issue_number}", headers=HEADERS, json={"state": "closed"})
+        print(f"[OK] Quickdraw : issue #{issue_number} ouverte et fermée")
 
 
 def make_contribution():
@@ -31,34 +95,47 @@ def make_contribution():
     timestamp = now.strftime("%Y-%m-%d %H:%M:%S UTC")
     date_str = now.strftime("%Y-%m-%d")
     slot = "matin" if now.hour < 12 else "soir"
+    branch = f"contribution/{date_str}-{slot}"
 
-    current_content, sha = get_current_file()
+    # 1. Récupérer le SHA de main
+    main_sha = get_main_sha()
 
-    if current_content is None:
-        new_content = f"# Journal des contributions\n\n| Date | Heure | Créneau |\n|------|-------|--------|\n"
-    else:
-        new_content = current_content
+    # 2. Créer une branche
+    create_branch(branch, main_sha)
+    print(f"[OK] Branche créée : {branch}")
 
-    new_content += f"| {date_str} | {now.strftime('%H:%M')} UTC | {slot} |\n"
+    # 3. Mettre à jour le fichier sur la branche
+    content, sha = get_file(branch)
+    if content is None:
+        content = "# Journal des contributions\n\n| Date | Heure | Créneau |\n|------|-------|----------|\n"
+    content += f"| {date_str} | {now.strftime('%H:%M')} UTC | {slot} |\n"
 
-    encoded = base64.b64encode(new_content.encode("utf-8")).decode("utf-8")
-    commit_message = f"contribution automatique - {timestamp}"
+    commit_message = (
+        f"contribution automatique - {timestamp}\n\n"
+        + "\n".join(CO_AUTHORS)
+    )
+    update_file(branch, content, sha, commit_message)
+    print(f"[OK] Commit sur {branch} (Pair Extraordinaire)")
 
-    payload = {
-        "message": commit_message,
-        "content": encoded,
-    }
-    if sha:
-        payload["sha"] = sha
+    # 4. Ouvrir une PR
+    pr_number = open_pr(
+        branch,
+        title=f"Contribution automatique - {timestamp}",
+        body=f"Mise à jour automatique du journal.\n\n_{slot} du {date_str}_",
+    )
+    print(f"[OK] PR #{pr_number} ouverte (Pull Shark + YOLO)")
 
-    url = f"{API_BASE}/contents/{FILE_PATH}"
-    response = requests.put(url, headers=HEADERS, json=payload)
+    # 5. Merger la PR immédiatement sans review (YOLO)
+    merge_pr(pr_number)
+    print(f"[OK] PR #{pr_number} mergée")
 
-    if response.status_code in (200, 201):
-        print(f"[OK] Commit réussi : {commit_message}")
-    else:
-        print(f"[ERREUR] {response.status_code} - {response.json()}")
-        raise Exception("Echec du commit GitHub")
+    # 6. Supprimer la branche
+    delete_branch(branch)
+
+    # 7. Quickdraw : ouvrir/fermer une issue
+    quickdraw()
+
+    print(f"\n Achievements visés : Pull Shark, YOLO, Pair Extraordinaire, Quickdraw")
 
 
 if __name__ == "__main__":
