@@ -1,0 +1,38 @@
+name: Contribution Automatique
+
+on:
+  schedule:
+    - cron: "0 9 * * *"   # 9h00 UTC chaque jour
+    - cron: "0 20 * * *"  # 20h00 UTC chaque jour
+  workflow_dispatch:       # déclenchement manuel possible
+
+permissions:
+  contents: write
+
+jobs:
+  commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Mise à jour du journal
+        run: |
+          mkdir -p contributions
+          DATE=$(date -u '+%Y-%m-%d')
+          TIME=$(date -u '+%H:%M')
+          HOUR=$(date -u '+%H')
+          if [ "$HOUR" -lt 12 ]; then SLOT="matin"; else SLOT="soir"; fi
+
+          if [ ! -f contributions/log.md ]; then
+            printf "# Journal des contributions\n\n| Date | Heure | Créneau |\n|------|-------|----------|\n" > contributions/log.md
+          fi
+
+          echo "| $DATE | $TIME UTC | $SLOT |" >> contributions/log.md
+
+      - name: Commit et push
+        run: |
+          git config user.name "salim2607"
+          git config user.email "titouche.ts@gmail.com"
+          git add contributions/log.md
+          git diff --staged --quiet || git commit -m "contribution automatique - $(date -u '+%Y-%m-%d %H:%M UTC')"
+          git push
