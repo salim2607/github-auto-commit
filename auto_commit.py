@@ -1,4 +1,5 @@
 import os
+import time
 import base64
 import requests
 from datetime import datetime, timezone
@@ -72,11 +73,20 @@ def open_pr(branch, title, body):
     return r.json()["number"]
 
 
-def merge_pr(pr_number):
-    requests.put(f"{API}/pulls/{pr_number}/merge", headers=HEADERS, json={
-        "merge_method": "squash",
-        "commit_title": f"Merge pull request #{pr_number}",
-    }).raise_for_status()
+def merge_pr(pr_number, retries=5, delay=5):
+    for attempt in range(retries):
+        r = requests.put(f"{API}/pulls/{pr_number}/merge", headers=HEADERS, json={
+            "merge_method": "squash",
+            "commit_title": f"Merge pull request #{pr_number}",
+        })
+        if r.ok:
+            return
+        if r.status_code == 405:
+            if attempt < retries - 1:
+                print(f"[WAIT] PR #{pr_number} pas encore mergeable, retry dans {delay}s... ({attempt+1}/{retries})")
+                time.sleep(delay)
+                continue
+        r.raise_for_status()
 
 
 def add_reaction(subject_type, subject_number, emoji):
